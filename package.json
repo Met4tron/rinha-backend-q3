@@ -1,0 +1,28 @@
+{
+  "name": "rinha-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsx watch ./src/handler.ts",
+    "build": "tsup ./src/handler.ts"
+  },
+  "keywords": [],
+  "author": "Yuri Gomes (https://github.com/met4tron)",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "generic-pool": "^3.9.0",
+    "hyper-express": "^6.8.2",
+    "ioredis": "^5.3.2",
+    "postgres": "^3.3.5",
+    "zod": "^3.21.4"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.13",
+    "@types/pg": "^8.10.2",
+    "tsup": "^7.2.0",
+    "tsx": "^3.12.7"
+  }
+}
