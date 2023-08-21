@@ -3,6 +3,8 @@ services:
   api1: # API - Instância 01
     image: rinha:latest
     hostname: api1
+    networks:
+      - rinha-network
     depends_on:
       - db
       - redis
@@ -11,7 +13,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.2'
+          cpus: '0.1'
           memory: '0.4GB'
 
   api2: # API - Instância 01
@@ -20,12 +22,14 @@ services:
     depends_on:
       - db
       - redis
+    networks:
+      - rinha-network
     expose:
       - "80"
     deploy:
       resources:
         limits:
-          cpus: '0.2'
+          cpus: '0.1'
           memory: '0.4GB'
 
   nginx: # Load Balancer
@@ -35,28 +39,34 @@ services:
     depends_on:
       - api1
       - api2
+    networks:
+      - rinha-network
     ports:
       - "9999:9999"
     deploy:
       resources:
         limits:
           cpus: '0.25'
-          memory: '0.5GB'
-
+          memory: '0.3GB'
   redis:
     image: redis:latest
-    hostname: cache
+    hostname: redis
     ports:
       - 6379:6379
+    networks:
+      - rinha-network
     deploy:
       resources:
         limits:
-          cpus: '0.3'
+          cpus: '0.1'
           memory: '0.3GB'
 
   db: # Banco de dados
     image: postgres
     hostname: database
+    command: 'postgres -c max_connections=200 -c shared_buffers=256MB -c fsync=off -c full_page_writes=off'
+    networks:
+      - rinha-network
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: 1234
@@ -68,10 +78,9 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.55'
-          memory: '1.4GB'
+          cpus: '0.95'
+          memory: '1.6GB'
 
 networks:
-  default:
+  rinha-network:
     driver: bridge
-    name: rinha

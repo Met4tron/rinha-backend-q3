@@ -1,16 +1,31 @@
-CREATE TEXT SEARCH CONFIGURATION BUSCA (COPY = portuguese);
-ALTER TEXT SEARCH CONFIGURATION BUSCA ALTER MAPPING FOR hword, hword_part, word WITH portuguese_stem;
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
 
-CREATE TABLE IF NOT EXISTS person (
-    id VARCHAR(36),
-    apelido VARCHAR(32) CONSTRAINT ID_PK PRIMARY KEY,
-    nome VARCHAR(100),
-    nascimento CHAR(10),
-    stack VARCHAR(1024),
-    BUSCA TSVECTOR GENERATED ALWAYS AS (
-        TO_TSVECTOR('BUSCA', NOME || ' ' || APELIDO || ' ' || STACK)
-    ) STORED
+ALTER SCHEMA PUBLIC OWNER TO root;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+DROP TABLE IF EXISTS public."people";
+
+CREATE TABLE IF NOT EXISTS public."people" (
+    id VARCHAR(36) CONSTRAINT ID_PK PRIMARY KEY,
+    apelido VARCHAR(32) unique,
+    nome VARCHAR(100) not null,
+    nascimento CHAR(10) not null,
+    stack VARCHAR(255)
 );
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS IDX_person_ID ON person USING HASH (ID);
-CREATE INDEX CONCURRENTLY IF NOT EXISTS IDX_person_BUSCA ON person USING GIN (BUSCA);
+CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA pg_catalog;
+
+CREATE INDEX idx_pessoas_apelido_trgm ON public."people" USING gin("apelido" gin_trgm_ops);
+CREATE INDEX idx_pessoas_nome_trgm ON public."people" USING gin("nome" gin_trgm_ops);
