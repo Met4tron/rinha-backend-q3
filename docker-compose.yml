@@ -1,36 +1,36 @@
 version: '3.5'
 services:
   api1: # API - Instância 01
-    image: rinha:latest
+    image: rinha
     hostname: api1
     networks:
       - rinha-network
     depends_on:
       - db
-      - redis
+      - nats
     expose:
       - "80"
     deploy:
       resources:
         limits:
-          cpus: '0.1'
-          memory: '0.4GB'
+          cpus: '0.3'
+          memory: '0.5GB'
 
   api2: # API - Instância 01
-    image: rinha:latest
-    hostname: api2
-    depends_on:
-      - db
-      - redis
+    image: rinha
+    hostname: api1
     networks:
       - rinha-network
+    depends_on:
+      - db
+      - nats
     expose:
       - "80"
     deploy:
       resources:
         limits:
-          cpus: '0.1'
-          memory: '0.4GB'
+          cpus: '0.3'
+          memory: '0.5GB'
 
   nginx: # Load Balancer
     image: nginx:latest
@@ -43,42 +43,53 @@ services:
       - rinha-network
     ports:
       - "9999:9999"
+    healthcheck:
+      test: ["CMD", "service", "nginx", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     deploy:
       resources:
         limits:
           cpus: '0.25'
           memory: '0.3GB'
-  redis:
-    image: redis:latest
-    hostname: redis
+  nats:
+    image: nats:2.9-alpine
+    hostname: nats
     ports:
-      - 6379:6379
+      - '4222:4222'
     networks:
       - rinha-network
     deploy:
       resources:
         limits:
           cpus: '0.1'
-          memory: '0.3GB'
+          memory: '0.1GB'
 
   db: # Banco de dados
     image: postgres
     hostname: database
-    command: 'postgres -c max_connections=200 -c shared_buffers=256MB -c fsync=off -c full_page_writes=off'
+    command: postgres -c config_file=/docker-entrypoint-initdb.d/postgresql.conf
     networks:
       - rinha-network
     environment:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: 1234
       POSTGRES_DB: rinhadb
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready", "-h localhost", "-p 5432" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     ports:
       - 5432:5432
     volumes:
+      - ./postgresql.conf:/docker-entrypoint-initdb.d/postgresql.conf
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     deploy:
       resources:
         limits:
-          cpus: '0.95'
+          cpus: '0.55'
           memory: '1.6GB'
 
 networks:

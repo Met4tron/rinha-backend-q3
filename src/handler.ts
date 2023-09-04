@@ -1,12 +1,9 @@
 import * as HyperExpress from 'hyper-express';
 import { randomUUID } from 'node:crypto';
-import cors from 'cors';
-import {
-  getApelidoFromCache,
-  getRequestCache,
-  setApelidoCache, setRequestCache
-} from './redis';
-import {createPersonSchema, findPersonByIdSchema, findPersonByQuery} from './schemas';
+import { cpus } from 'node:os';
+import process from 'node:process';
+import cluster from 'node:cluster';
+import { createPersonSchema, findPersonByIdSchema, findPersonByQuery } from './schemas';
 import {
   addPerson,
   getCountPerson, getPerson,
@@ -14,7 +11,16 @@ import {
   Person
 } from './db';
 import Validator from 'fastest-validator';
-import {PostgresError} from 'postgres';
+import {
+  connectNats,
+  getApelidoFromCache,
+  getRequestCache, getTermFromCache,
+  publishMessage
+} from './nats';
+
+const numCPUs = cpus().length
+
+process.env.UV_THREADPOOL_SIZE = "" + numCPUs;
 
 const v = new Validator({ haltOnFirstError: true });
 
@@ -25,11 +31,6 @@ const compiledSchemas = {
 }
 
 const server = new HyperExpress.Server({ trust_proxy: true });
-
-server.use(cors());
-
-const personById = new Map();
-const personByApelido = new Set()
 
 server.post('/pessoas', async (request, response) => {
   try {
@@ -43,15 +44,7 @@ server.post('/pessoas', async (request, response) => {
       return response.status(400).json({ message: 'Data de nascimento inválida' });
     }
 
-    if (personByApelido.has(body.apelido)) {
-      return response
-        .status(422)
-        .json({ message: 'Invalid user' });
-    }
-
-    const hasApelido = await getApelidoFromCache(body.apelido);
-
-    if (hasApelido) {
+    if (getApelidoFromCache(body.apelido)) {
       return response
         .status(422)
         .json({ message: 'Invalid user' });
@@ -67,32 +60,16 @@ server.post('/pessoas', async (request, response) => {
       stack: body?.stack?.join(' ') ?? null
     };
 
-    try {
-      await addPerson(newPerson)
-    } catch (e) {
-      if (e instanceof PostgresError && e.code == '23505') {
-        return response
-          .status(422)
-          .json({ message: 'Invalid user' });
-      }
+    publishMessage('person.create', newPerson);
 
-      return response.status(500).json(e);
-    }
-
-    await Promise.all([
-      await setApelidoCache(newPerson.apelido),
-      await setRequestCache(`pessoas:${newPerson.id}`, JSON.stringify(newPerson)),
-    ]);
-
-    personByApelido.add(newPerson.apelido);
-    personById.set(newPerson.id, newPerson);
+    await addPerson(newPerson);
 
     return response
       .status(201)
       .header('Location', `/pessoas/${personId}`)
       .json({ message: 'User created' });
   } catch (e) {
-    return response.status(500).json(e);
+    return response.status(500)
   }
 });
 
@@ -104,10 +81,14 @@ server.get('/pessoas/:id', async (request, response) => {
 
     const personId = request.path_parameters.id;
 
-    if (personById.has(personId)) {
+    const cachePerson = getRequestCache(personId)
+
+    if (cachePerson) {
+      console.log("Cache - ID - NATS")
+      console.log(cachePerson)
       return response.status(200)
         .header('cache-control', 'public, max-age=604800, immutable')
-        .json(personById.get(personById));
+        .json(cachePerson);
     }
 
     const personDb = await getPerson(personId);
@@ -119,18 +100,10 @@ server.get('/pessoas/:id', async (request, response) => {
         .json(personDb?.[0]);
     }
 
-    const cachedReq = await getRequestCache(`pessoas:${personId}`);
-
-    if (cachedReq) {
-      return response
-        .status(200)
-        .header('cache-control', 'public, max-age=604800, immutable')
-        .json(JSON.parse(cachedReq));
-    }
-
-    return response.status(404).json({ message: 'Person not found' });
+    return response.status(404);
   } catch (err) {
-    return response.status(500).json(err);
+    console.log(err);
+    return response.status(500)
   }
 });
 
@@ -146,28 +119,57 @@ server.get('/pessoas', async (request, response) => {
       return response.status(400).json({ });
     }
 
-    const persons = await getPersonFullText(qp.t.toLowerCase());
+    const peopleCache = getTermFromCache(qp.t);
 
-    return response.status(200).json(persons);
+    if (peopleCache) {
+      console.log("Cache - Term - NATS")
+      return response.status(200).json(peopleCache);
+    }
+
+    const people = await getPersonFullText(qp.t.toLowerCase());
+
+    publishMessage("person.search", {
+      term: qp.t.toLowerCase(),
+      data: people,
+    })
+
+    return response.status(200).json(people);
   } catch (e) {
+    console.log("Error in search by term");
     return response
       .status(500)
-      .json({ message: 'Error in search user with terms' });
   }
 });
 
 server.get('/contagem-pessoas', async (request, response) => {
   try {
     const countPerson = await getCountPerson();
-    console.log(countPerson[0])
     return response.status(200).json({ count: countPerson[0].count });
   } catch (e) {
-    console.log(e)
     return response.status(500).json({});
   }
 });
 
-server
-  .listen(80)
-  .then((socket) => console.log('Webserver started on port 3000'))
-  .catch((error) => console.log('Failed to start webserver on port 80'));
+if (cluster.isPrimary) {
+  console.log(`Primary ${process.pid} is running`);
+
+  // Fork workers.
+  for (let i = 0; i < numCPUs; i++) {
+    cluster.fork();
+  }
+
+  cluster.on('exit', (worker, code, signal) => {
+    console.log(`worker ${worker.process.pid} died`);
+  });
+} else {
+  connectNats()
+    .then(_ => server.listen(80))
+    .then((socket) => console.log('Webserver started on port 3000'))
+    .then(_ => {
+      console.log(`Worker ${process.pid} started`);
+    })
+    .catch((error) => {
+      console.log(error);
+      console.log('Failed to start webserver on port 80');
+    });
+}
